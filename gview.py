@@ -7,7 +7,7 @@ class BnGraphicsItem(QtGui.QGraphicsPixmapItem):
         QtGui.QGraphicsPixmapItem.__init__(self)
         #Image
         self.image = image
-        self.setFlags(self.flags() | QtGui.QGraphicsItem.ItemIsSelectable | QtGui.QGraphicsItem.ItemIsMovable )
+        self.setFlags(self.flags() | QtGui.QGraphicsItem.ItemIsSelectable)
         self.thumb = QtGui.QPixmap(self.image).scaled(200,200)
         self.setPixmap(self.thumb)
         self.setData(32, self.image)
@@ -22,7 +22,7 @@ class BnGraphicsViewer(QtGui.QGraphicsView):
     '''Graphics Viewer'''
     def __init__(self):
         QtGui.QGraphicsView.__init__(self)
-        self.setInteractive(False)
+        self.setInteractive(True)
         self.gscene = QtGui.QGraphicsScene()
         self.setScene(self.gscene)
 
