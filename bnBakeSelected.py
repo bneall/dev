@@ -10,6 +10,7 @@
 
 import PythonQt.QtGui as QtGui
 import mari
+import os
 
 mari_icon_path = mari.resources.path(mari.resources.ICONS)
 
@@ -88,7 +89,7 @@ class BakeSelectedDialog(QtGui.QDialog):
         self.layerGroupBox.connect("toggled (bool)", self.toggleChannelOption)
         self.cancelBtn.connect("clicked()", self.close)
         self.bakeBtn.connect("clicked()", self.bakeSelected)
-        
+
         self.init()
 
     def init(self):
@@ -97,8 +98,17 @@ class BakeSelectedDialog(QtGui.QDialog):
         self.layerGroupBox.setChecked(False)
         self.setWindowTitle('Bake %s' % currentChannel.name())
         self.customName.setText('%s_bake' % currentChannel.name())
+
+        #Sort
+        chanList = []
         for channel in currentGeo.channelList():
-            self.channelCombo.addItem(channel.name(), channel)
+            chanList.append(channel.name())
+        chanList = sorted(chanList)
+
+        #Add
+        for channel in chanList:
+            mchan = currentGeo.findChannel(channel)
+            self.channelCombo.addItem(channel, mchan)
 
     def toggleLayerOption(self):
         if self.channGroupBox.isChecked():
@@ -110,7 +120,7 @@ class BakeSelectedDialog(QtGui.QDialog):
 
     def hideLayers(self, currentChannel):
         '''Hides unselected layers for bake'''
-        mari.history.startMacro('Bake Selected(Hide Layers)')
+        mari.history.startMacro('Bake Selected (Hide Layers)')
 
         self.visibleLayers = []
         self.selectedLayers = []
@@ -121,7 +131,7 @@ class BakeSelectedDialog(QtGui.QDialog):
             if layer.isSelected():
                 self.selectedLayers.append(layer)
 
-        if self.selectedLayers:
+        if len(self.selectedLayers) > 1:
             for layer in currentChannel.layerList():
                 if layer in self.selectedLayers:
                     layer.setVisibility(True)
@@ -134,7 +144,7 @@ class BakeSelectedDialog(QtGui.QDialog):
 
     def showLayers(self, currentChannel):
         '''Returns Layer visiblity'''
-        mari.history.startMacro('Bake Selected(Show Layers)')
+        mari.history.startMacro('Bake Selected (Show Layers)')
 
         for layer in currentChannel.layerList():
             if layer in self.visibleLayers:
@@ -143,14 +153,14 @@ class BakeSelectedDialog(QtGui.QDialog):
                 layer.setVisibility(False)
 
         mari.history.stopMacro()
-    
+
     def bakeSelected(self):
         currentGeo = mari.geo.current()
         currentChannel = mari.geo.current().currentChannel()
         selectedPatches = currentGeo.selectedPatches()
-        
+
         self.hideLayers(currentChannel)
-        
+
         uv_index = [i.uvIndex() for i in selectedPatches]
         if not uv_index:
             uv_index = [i.uvIndex() for i in currentGeo.patchList()]
@@ -189,10 +199,10 @@ class BakeSelectedDialog(QtGui.QDialog):
 #----------------------------------------------------------------------
 # GUI
 #----------------------------------------------------------------------
-bakeSelectedITEM = mari.actions.create('Bake Selected', 'mari.utils.execDialog(BakeSelectedDialog())')
+bakeSelectedITEM = mari.actions.create('Bake Selected', 'mari.utils.execDialog(bnBakeSelected.BakeSelectedDialog())')
 bakeSelectedITEM.setIconPath('%s/Bake.png' % mari_icon_path)
 mari.menus.addAction(bakeSelectedITEM, 'MainWindow/Channels', 'Flatten')
-#bakeSelectedITEM.setEnabled(False)
+bakeSelectedITEM.setEnabled(False)
 
 ## Activation
 def activation():
