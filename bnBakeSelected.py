@@ -8,7 +8,7 @@
 #Ben Neall - ben.neall@methodstudios.com
 #-------------------------------------------------------------------------------------------------#
 
-import PySide.QtGui as QtGui
+import PythonQt.QtGui as QtGui
 import mari
 
 mari_icon_path = mari.resources.path(mari.resources.ICONS)
@@ -24,15 +24,9 @@ if mari.app.version().isMac():
 #                Options GUI
 #---------------------------------------------------
 class BakeSelectedDialog(QtGui.QDialog):
-
-    currentGeo = mari.current.geo()
-    currentChannel = mari.current.channel()
-    selectedPatches =  currentGeo.selectedPatches()
-
     def __init__(self):
         super(BakeSelectedDialog, self).__init__()
         self.setMinimumWidth(500)
-        self.setWindowTitle('Bake %s' % self.currentChannel.name())
 
         mainLayout = QtGui.QVBoxLayout()
         nameLayout = QtGui.QGridLayout()
@@ -65,6 +59,9 @@ class BakeSelectedDialog(QtGui.QDialog):
         self.channelBitDepthOptionCombo = QtGui.QComboBox()
         self.channelBitDepthOptionCombo.addItems(['Source', '8', '16', '32'])
         self.customDirLabel = QtGui.QLabel('Location: ')
+        self.scaleOptionLabel = QtGui.QLabel('Scale: ')
+        self.scaleOptionCombo = QtGui.QComboBox()
+        self.scaleOptionCombo.addItems(['Source', 'Target'])
         self.customDir = QtGui.QLineEdit(tempDir)
         self.bakeBtn = QtGui.QPushButton('Bake')
         self.cancelBtn = QtGui.QPushButton('Cancel')
@@ -74,8 +71,12 @@ class BakeSelectedDialog(QtGui.QDialog):
         nameLayout.setColumnStretch(1, 0)
         option1Layout.addWidget(self.channelBitDepthLabel)
         option1Layout.addWidget(self.channelBitDepthOptionCombo)
+        option1Layout.addStretch()
         option2Layout.addWidget(self.channelComboLabel)
         option2Layout.addWidget(self.channelCombo)
+        option2Layout.addWidget(self.scaleOptionLabel)
+        option2Layout.addWidget(self.scaleOptionCombo)
+        option2Layout.addStretch()
         outputLayout.addWidget(self.customDirLabel, 1, 0)
         outputLayout.addWidget(self.customDir, 1, 1)
         outputLayout.setColumnStretch(1, 0)
@@ -83,17 +84,20 @@ class BakeSelectedDialog(QtGui.QDialog):
         buttonLayout.addWidget(self.cancelBtn)
         buttonLayout.addWidget(self.bakeBtn,)
 
-        self.channGroupBox.toggled.connect(self.toggleLayerOption)
-        self.layerGroupBox.toggled.connect(self.toggleChannelOption)
-        self.cancelBtn.clicked.connect(self.close)
-        self.bakeBtn.clicked.connect(self.bakeSelected)
-
+        self.channGroupBox.connect("toggled (bool)", self.toggleLayerOption)
+        self.layerGroupBox.connect("toggled (bool)", self.toggleChannelOption)
+        self.cancelBtn.connect("clicked()", self.close)
+        self.bakeBtn.connect("clicked()", self.bakeSelected)
+        
         self.init()
 
     def init(self):
+        currentGeo = mari.geo.current()
+        currentChannel = mari.geo.current().currentChannel()
         self.layerGroupBox.setChecked(False)
-        self.customName.setText('%s_bake' % self.currentChannel.name())
-        for channel in self.currentGeo.channelList():
+        self.setWindowTitle('Bake %s' % currentChannel.name())
+        self.customName.setText('%s_bake' % currentChannel.name())
+        for channel in currentGeo.channelList():
             self.channelCombo.addItem(channel.name(), channel)
 
     def toggleLayerOption(self):
@@ -104,64 +108,82 @@ class BakeSelectedDialog(QtGui.QDialog):
         if self.layerGroupBox.isChecked():
             self.channGroupBox.setChecked(False)
 
-    def bakeSelected(self):
-        uv_index = [i.uvIndex() for i in self.selectedPatches]
-        if not uv_index:
-            uv_index = [i.uvIndex() for i in self.currentGeo.patchList()]
+    def hideLayers(self, currentChannel):
+        '''Hides unselected layers for bake'''
+        mari.history.startMacro('Bake Selected(Hide Layers)')
 
-        #Manage layer visibility
-        visibleLayers = []
-        selectedLayers = []
-        for layer in self.currentChannel.layerList():
+        self.visibleLayers = []
+        self.selectedLayers = []
+
+        for layer in currentChannel.layerList():
             if layer.isVisible():
-                visibleLayers.append(layer)
+                self.visibleLayers.append(layer)
             if layer.isSelected():
-                selectedLayers.append(layer)
+                self.selectedLayers.append(layer)
 
-        #Hide unselected layers for bake
-        if selectedLayers:
-            for layer in self.currentChannel.layerList():
-                if layer in selectedLayers:
+        if self.selectedLayers:
+            for layer in currentChannel.layerList():
+                if layer in self.selectedLayers:
                     layer.setVisibility(True)
                 else:
                     layer.setVisibility(False)
         else:
-            pass
+            self.selectedLayers = currentChannel.layerList()
 
-        #Temp location
-        temp_dir = self.customDir.text()
-
-        #New Channel Name
-        customName = self.customName.text()
-        customTemplate = '%s/%s.$UDIM.tif' % (temp_dir, customName)
-
-        mari.history.startMacro('Bake Selected')
-        #-------------------------------------------------------------------------------------------------------------------------------------------
-        #Bake selected to tmp
-        self.currentChannel.exportImagesFlattened(customTemplate, 0, uv_index)
-
-        #New Channel
-        bitDepth = self.channelBitDepthOptionCombo.currentText()
-        if bitDepth == 'Source':
-            bitDepth = self.currentChannel.depth()
-        else:
-            bitDepth = int(bitDepth)
-        if self.channGroupBox.isChecked():
-            destinationChannel = self.currentGeo.createChannel(customName, 4096, 4096, bitDepth)
-            destinationChannel.importImages(customTemplate, 0, 0, 0, uv_index)
-        elif self.layerGroupBox.isChecked():
-            destinationChannel = self.channelCombo.itemData(self.channelCombo.currentIndex(), 32)
-            newLayer = destinationChannel.createPaintableLayer(customName)
-            newLayer.importImages(customTemplate, 0, uv_index)
-        #-------------------------------------------------------------------------------------------------------------------------------------------
         mari.history.stopMacro()
 
-        #Show all layers
-        for layer in self.currentChannel.layerList():
-            if layer in visibleLayers:
+    def showLayers(self, currentChannel):
+        '''Returns Layer visiblity'''
+        mari.history.startMacro('Bake Selected(Show Layers)')
+
+        for layer in currentChannel.layerList():
+            if layer in self.visibleLayers:
                 layer.setVisibility(True)
             else:
                 layer.setVisibility(False)
+
+        mari.history.stopMacro()
+    
+    def bakeSelected(self):
+        currentGeo = mari.geo.current()
+        currentChannel = mari.geo.current().currentChannel()
+        selectedPatches = currentGeo.selectedPatches()
+        
+        self.hideLayers(currentChannel)
+        
+        uv_index = [i.uvIndex() for i in selectedPatches]
+        if not uv_index:
+            uv_index = [i.uvIndex() for i in currentGeo.patchList()]
+
+        #Temp location
+        temp_dir = self.customDir.text
+
+        #New Channel Name
+        customName = self.customName.text
+        customPath = os.path.join(temp_dir, customName)
+        customTemplate = '%s.$UDIM.tif' % customPath
+
+        #-------------------------------------------------------------------------------------------
+        #Bake selected to tmp
+        currentChannel.exportImagesFlattened(customTemplate, 0, uv_index)
+
+        bitDepth = self.channelBitDepthOptionCombo.currentText
+        if bitDepth == 'Source':
+            bitDepth = currentChannel.depth()
+        else:
+            bitDepth = int(bitDepth)
+        #New Channel
+        if self.channGroupBox.isChecked():
+            destinationChannel = currentGeo.createChannel(customName, 4096, 4096, bitDepth)
+            destinationChannel.importImages(customTemplate, 0, 0, 0, uv_index)
+        #New Layer
+        elif self.layerGroupBox.isChecked():
+            destinationChannel = self.channelCombo.itemData(self.channelCombo.currentIndex, 32)
+            newLayer = destinationChannel.createPaintableLayer(customName)
+            newLayer.importImages(customTemplate, 0, uv_index)
+        #-------------------------------------------------------------------------------------------
+
+        self.showLayers(currentChannel)
         self.close()
 
 #----------------------------------------------------------------------
