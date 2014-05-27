@@ -1,4 +1,5 @@
 #gView 0.5.4
+#View Module - gViewer.py
 #---------------------------------------------------
 #Description: Texture thumbnail browser for Mari
 #Supported Versions: 2.6.x
@@ -7,10 +8,10 @@
 
 import PySide.QtGui as QtGui
 import PySide.QtCore as QtCore
-import gViewBookmark
 import threading
 import json
 import os
+import uuid
 import glob
 import mari
 
@@ -24,6 +25,8 @@ gViewIconDir = os.path.join(mari_script_path, 'gView', 'Icons')
 gViewTempDir = '/usr/tmp'
 if mari.app.version().isWindows():
     gViewTempDir = 'C:\\temp'
+if mari.app.version().isMac():
+    gViewTempDir = '/tmp'
 gViewThumbDir = 'gViewThumbs'
 gViewBmarkFile = os.path.join(mari_user_path, 'gViewBookmark.prefs')
 gViewConfigFile = os.path.join(mari_user_path, 'gViewConfig.prefs')
@@ -37,8 +40,230 @@ try:
     config = json.load(configFile)
     gViewTempDir = config['gViewTempDir']
 except:
+    print gViewConfigFile
+    print gViewBmarkFile
+    print gViewTempDir
     pass
 #---------------------------------------------------------
+
+class GBookmarkItem(QtGui.QTreeWidgetItem):
+    def __init__(self, name):
+        super(GBookmarkItem, self).__init__()
+        self.setText(0, name)
+        self.setFlags(
+                            QtCore.Qt.ItemIsEditable
+                          | QtCore.Qt.ItemIsEnabled
+                          | QtCore.Qt.ItemIsSelectable
+                          | QtCore.Qt.ItemIsDropEnabled
+                          | QtCore.Qt.ItemIsDragEnabled
+                          )
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.RightButton:
+            pass
+
+class GBookmark(QtGui.QTreeWidget):
+    pathAdded = QtCore.Signal(str)
+    itemMoved = QtCore.Signal()
+    currentItems = []
+    pathList = []
+    def __init__(self):
+        super(GBookmark, self).__init__()
+        self.setMaximumWidth(250)
+
+        self.setDragDropMode(self.InternalMove)
+        self.installEventFilter(self)
+        self.setColumnCount(1)
+        self.setAlternatingRowColors(True)
+        self.setIndentation(10)
+        self.setHeaderHidden(True)
+        self.setEditTriggers(QtGui.QAbstractItemView.SelectedClicked)
+        self.setDragEnabled(True)
+        self.setSelectionMode(self.ExtendedSelection)
+        self.itemChanged.connect(self.sortAllItems)
+        self.itemMoved.connect(self.restoreExpandedState)
+        #Style
+        self.setStyleSheet("\
+        QTreeWidget { alternate-background-color: rgb(105, 105, 105); } \
+        ")
+
+        #Context Menu
+        self.menu = QtGui.QMenu()
+        self.importAction = self.menu.addAction(QtGui.QIcon('%s/Palette.16x16.png' % mari_icon_path), 'New Group')
+        #Connections
+        self.importAction.triggered.connect(self.makeBlankItem)
+
+    def eventFilter(self, sender, event):
+        '''Detects when an item moves'''
+        if (event.type() == QtCore.QEvent.ChildRemoved):
+            self.itemMoved.emit()
+        if (event.type() == QtCore.QEvent.ChildAdded):
+            self.itemMoved.emit()
+        return False # don't actually interrupt anything
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Delete:
+            self.removeBookmark()
+
+    def contextMenuEvent(self, event):
+        self.menu.exec_(event.globalPos())
+
+    def removeBookmark(self):
+        for item in self.selectedItems():
+            if not item.parent():
+                index = self.indexOfTopLevelItem(item)
+                self.takeTopLevelItem(index)
+            else:
+                index = item.parent().indexOfChild(item)
+                item.parent().takeChild(index)
+
+    def sortAllItems(self):
+        self.sortItems(0, QtCore.Qt.AscendingOrder)
+
+    def buildFromPath(self, path=None, mode='multi'):
+        #path = self.customPath.text()
+        pathList = []
+        itemList = []
+
+        #Top Directory
+        rootName = os.path.basename(path)
+        rootPath = path
+        rootItem = GBookmarkItem(rootName)
+        rootItem.setData(0, 32, [None, rootName, rootPath])
+        itemList.append(rootItem)
+        self.addTopLevelItem(rootItem)
+
+        if mode is 'multi':
+            self.pathAdded.emit(rootPath)
+            #Sub Directories
+            for root, dirs, files in os.walk(path):
+                for name in dirs:
+                    if not name.startswith('.'):
+                        parent = root
+                        fullpath = os.path.join(root, name)
+                        bookmarkData = [parent, name, fullpath]
+                        parentItem = self.findParentItem(parent)
+                        if parentItem:
+                            newItem = MyTreeItem(name)
+                            newItem.setData(0, 32, bookmarkData)
+                            parentItem.insertChild(0, newItem)
+                            itemList.append(newItem)
+                        self.pathAdded.emit(fullpath)
+        #Build IDs
+        self.setItemUUID(itemList)
+        self.setParentUUID()
+
+        #Sort and Expand
+        self.sortAllItems()
+
+    def makeBlankItem(self):
+        inputText, ok = QtGui.QInputDialog.getText(self, 'Create New Group', 'Enter name:')
+
+        if ok:
+            #Keep Hierarchy
+            for item in self.selectedItems():
+                if item.childCount() >= 1:
+                    for index in range(item.childCount()):
+                        childItem = item.child(index)
+                        childItem.setSelected(False)
+
+            #"Blank" Item
+            name = str(inputText)
+            UUID = uuid.uuid4().hex
+            bookmarkData = [None, name, UUID, None, True]
+            blankItem = GBookmarkItem(name)
+            blankItem.setData(0, 32, bookmarkData)
+            self.addTopLevelItem(blankItem)
+
+            #Group Items
+            for item in self.selectedItems():
+                if item.parent():
+                    item.parent().removeChild(item)
+                else:
+                    self.invisibleRootItem().removeChild(item)
+                blankItem.insertChild(0, item)
+
+    def findParentItem(self, itemParent):
+        it = QtGui.QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            itemData = item.data(0, 32)
+            if itemData[2] == itemParent:
+                return item
+            it += 1
+
+    def setItemUUID(self, itemList):
+        for item in itemList:
+            name = item.text(0)
+            parentUUID = None
+            UUID = uuid.uuid4().hex
+            fullPath = item.data(0, 32)[2]
+            item.setData(0, 32, [parentUUID, name, UUID, fullPath, None])
+            item.setExpanded(True)
+
+    def setParentUUID(self):
+        it = QtGui.QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            name = item.text(0)
+            UUID = item.data(0, 32)[2]
+            fullPath = item.data(0, 32)[3]
+            expandState = item.isExpanded()
+            try:
+                parentItem = item.parent()
+                parentUUID = parentItem.data(0, 32)[2]
+            except:
+                parentUUID = None
+            item.setData(0, 32, [parentUUID, name, UUID, fullPath, expandState])
+            it += 1
+
+    def restoreExpandedState(self):
+        it = QtGui.QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            expandState = item.data(0, 32)[4]
+            item.setExpanded(expandState)
+            it += 1
+
+    def buildTreeItems(self):
+        json_data = open(gViewBmarkFile)
+        data = json.load(json_data)
+
+        for item in data:
+            parentUUID = item[0]
+            name = item[1]
+            UUID = item[2]
+            fullPath = item[3]
+            expandState = item[4]
+            bookmarkData = [parentUUID, name, UUID, fullPath, expandState]
+            parentItem = self.findParentItem(parentUUID)
+            if parentItem:
+                newItem = GBookmarkItem(name)
+                newItem.setData(0, 32, bookmarkData)
+                parentItem.insertChild(0, newItem)
+                newItem.setExpanded(expandState)
+            else:
+                rootItem = GBookmarkItem(name)
+                rootItem.setData(0, 32, bookmarkData)
+                self.addTopLevelItem(rootItem)
+                rootItem.setExpanded(expandState)
+            if fullPath:
+                self.pathAdded.emit(fullPath)
+
+        #Sort
+        self.sortAllItems()
+
+    def saveBookmarkFile(self):
+        self.setParentUUID()
+        dataList = []
+        it = QtGui.QTreeWidgetItemIterator(self)
+        while it.value():
+            item = it.value()
+            itemData = item.data(0, 32)
+            dataList.append(itemData)
+            it += 1
+
+        with open(gViewBmarkFile, 'w') as outfile:
+            json.dump(dataList, outfile)
 
 class GThumbGen(QtCore.QThread):
     '''This class generates thumbnails to disc'''
@@ -51,7 +276,7 @@ class GThumbGen(QtCore.QThread):
     def generateThumb(self, source, thumb):
         sourceImage = QtGui.QImage(source)
         thumbImage = sourceImage.scaled(200,200, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        thumbImage.save(str(thumb), 'png', 75)
+        thumbImage.save(thumb, 'png', 75)
         self.thumbGen.emit()
 
     def run(self):
@@ -152,8 +377,7 @@ class GView(QtGui.QWidget):
         progLayout = QtGui.QHBoxLayout()
         self.setLayout(mainLayout)
 
-        #self.gbook = GBookmark()
-        self.gbook = gViewBookmark.MyDialog()
+        self.gbook = GBookmark()
         self.gviewer = QtGui.QGraphicsView()
         self.gscene = GScene()
         self.gviewer.setInteractive(True)
@@ -224,11 +448,13 @@ class GView(QtGui.QWidget):
         self.prefsBtn.clicked.connect(self.setTempDir)
         self.wizardBtn.clicked.connect(self.setWizardBookmark)
         self.gbook.pathAdded.connect(self.crawlWizard)
-        mari.utils.connect(mari.app.exiting, lambda: self.gbook.saveBookmarkFile())
         mari.utils.connect(mari.app.exiting, self.writePrefs)
 
         #Load bookmarkPreferences
-        self.gbook.buildTreeItems()
+        try:
+            self.gbook.buildTreeItems()
+        except:
+            print "gView Message: No prefs file found"
 
     def getThumbnailPath(self, path):
         self.thumbnailPath = '%s/%s%s' % (gViewTempDir, gViewThumbDir, path)
@@ -381,7 +607,6 @@ class GView(QtGui.QWidget):
         QtCore.QCoreApplication.processEvents()
 
     def setTempDir(self):
-        global gViewTempDir
         directory = QtGui.QFileDialog.getExistingDirectory(self, caption="Choose Thumbnail Folder", dir=gViewTempDir, options=QtGui.QFileDialog.ShowDirsOnly)
         if directory:
             gViewTempDir = directory
@@ -398,6 +623,8 @@ class GView(QtGui.QWidget):
         configDict['gViewTempDir'] = gViewTempDir
         with open(gViewConfigFile, 'w') as outfile:
             json.dump(configDict, outfile)
+
+        self.gbook.saveBookmarkFile()
 
     def importImages(self):
         selectedItems = self.gscene.selectedItems()
