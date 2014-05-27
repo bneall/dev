@@ -143,7 +143,7 @@ class GBookmark(QtGui.QTreeWidget):
                         bookmarkData = [parent, name, fullpath]
                         parentItem = self.findParentItem(parent)
                         if parentItem:
-                            newItem = MyTreeItem(name)
+                            newItem = GBookmarkItem(name)
                             newItem.setData(0, 32, bookmarkData)
                             parentItem.insertChild(0, newItem)
                             itemList.append(newItem)
